@@ -32,7 +32,7 @@ echo "--------------------------------------------------------"
 # --- 关键步骤: 进入代码所在目录 ---
 # Slurm作业默认从您提交命令时所在的目录开始执行,
 # 明确切换到代码目录是一个非常好的习惯, 可以避免路径问题。
-cd /share/home/yuan/DTU_KUL_LOSO
+cd /share/home/yuan/LY/SNN_DBformer/DE_DTU_SNN/final
 echo "当前工作目录 (Working Directory): $(pwd)"
 echo "--------------------------------------------------------"
 
@@ -71,8 +71,7 @@ echo "--------------------------------------------------------"
 
 # 执行您的Python脚本
 # -u 参数确保Python的输出不经过缓冲，直接写入日志文件，方便实时查看进度
-/share/home/yuan/.conda/envs/ly_torch/bin/python -u DE_model_SNN_V3.py
-
+/share/home/yuan/.conda/envs/ly_torch/bin/python -u DE_SDBformer_DTU.py
 
 
 # ===================================================================
