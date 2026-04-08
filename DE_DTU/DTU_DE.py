@@ -1,16 +1,25 @@
-import numpy as np
-import os
+# =============================================================================
+# Feature Extraction: Differential Entropy (DE) for EEG Signals
+# Description: Extracts DE features from raw EEG slices across 5 frequency bands.
+# Expected Input: .npz files containing 'eeg_slices' (N, C, T) and 'event_slices'.
+# Output: .npz files containing 'DE' (N, C, 5) and 'labels' (N,).
+# =============================================================================
+
+import argparse
 import math
-from scipy.signal import butter, lfilter
-from tqdm import tqdm
+import os
 import warnings
 
+import numpy as np
+from scipy.signal import butter, lfilter
+from tqdm import tqdm
+
 # =============================================================================
-# 1. 滤波器函数 (保持不变)
+# 1. Digital Signal Processing (DSP) Functions
 # =============================================================================
 
 def butter_bandpass(lowcut, highcut, fs, order=5):
-    """巴特沃斯带通滤波器系数"""
+    """Generates coefficients for a Butterworth bandpass filter."""
     nyq = 0.5 * fs
     low = lowcut / nyq
     high = highcut / nyq
@@ -18,132 +27,164 @@ def butter_bandpass(lowcut, highcut, fs, order=5):
     return b, a
 
 def butter_bandpass_filter(data, lowcut, highcut, fs, order=5):
-    """带通滤波函数"""
+    """Applies a Butterworth bandpass filter to the input data."""
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
     return lfilter(b, a, data)
 
 # =============================================================================
-# 2. DE 特征计算 (保持不变)
+# 2. Differential Entropy (DE) Calculation
 # =============================================================================
 
 def compute_DE(signal):
-    """计算DE特征 (对数方差)"""
-    # 确保信号长度大于1以计算方差
+    """
+    Computes the Differential Entropy (DE) of a given signal segment.
+    For a Gaussian distribution, DE is equivalent to the logarithm of the variance.
+    
+    Returns:
+        variance (float): The variance of the signal.
+        de (float): The differential entropy value.
+    """
+    # Ensure the signal length is sufficient to calculate variance
     if len(signal) <= 1:
         return 0.0, -np.inf 
         
     variance = np.var(signal, ddof=1)
     
-    # 避免对0或负数取对数
+    # Prevent math domain errors for zero or negative variance
     if variance <= 0:
         return variance, -np.inf
         
-    return variance, math.log(2 * math.pi * math.e * variance) / 2
+    de = math.log(2 * math.pi * math.e * variance) / 2
+    return variance, de
 
 # =============================================================================
-# 3. [修改] 提取并保存 DE 特征 (适配 _1s.npz 数据)
+# 3. Main Extraction Pipeline
 # =============================================================================
 
-def extract_de_from_1s_windows(data_root, save_root):
+def extract_de_from_1s_windows(data_root, save_root, num_subjects=18, frequency=128):
     """
-    修改版：
-    读取 S{participant}_Dataset_1s.npz 文件，
-    并对每个 1s 窗口计算 DE 特征。
+    Reads pre-sliced EEG data, applies 5-band filtering, computes DE features, 
+    and saves the extracted features to the target directory.
+    
+    Frequency Bands:
+        - Delta: 0.1 - 4 Hz
+        - Theta: 4 - 8 Hz
+        - Alpha: 8 - 14 Hz
+        - Beta:  14 - 31 Hz
+        - Gamma: 31 - 50 Hz
     """
-    
-    frequency = 128  # 128 采样点 / 1 秒 = 128 Hz
-    
-    # 确保保存目录存在
     os.makedirs(save_root, exist_ok=True)
     
-    # 遍历每个被试（1到18号被试）
-    for participant in range(1, 19): 
-        print(f"--- 正在处理第 {participant} 个被试的数据 ---")
+    for participant in range(1, num_subjects + 1): 
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Processing Subject S{participant}...")
 
-        # --- 1. [修改] 加载新的 _1s.npz 数据 ---
+        # --- 1. Load Raw Sliced Data ---
         file_name = f'S{participant}_Dataset_1s.npz'
         file_path = os.path.join(data_root, file_name)
         
         if not os.path.exists(file_path):
-            warnings.warn(f"找不到文件: {file_path}, 跳过被试 {participant}")
+            warnings.warn(f"File not found: {file_path}. Skipping Subject S{participant}.")
             continue
             
         try:
             data = np.load(file_path, allow_pickle=True)
-            # 转换为 numpy 以便 scipy 处理
+            # Expected shape: (N_samples, 66, 128)
             EEG_data = data['eeg_slices'].astype(np.float64) 
-            # (N_samples, 66, 128)
             
-            # [修改] 提取标签并转换为 (0, 1)
+            # Extract labels and shift to 0-indexed (e.g., 1,2 -> 0,1)
             labels = np.array([int(item[0]) for item in data['event_slices']]) - 1
-            # (N_samples,)
             
         except Exception as e:
-            warnings.warn(f"加载文件 {file_path} 出错: {e}, 跳过被试 {participant}")
+            warnings.warn(f"Error loading {file_path}: {e}. Skipping Subject S{participant}.")
             continue
 
-        # --- 2. [修改] 初始化 DE 存储数组 (66 通道) ---
+        # --- 2. Initialize DE Storage Arrays ---
         num_samples = EEG_data.shape[0]
-        num_channels = 66 # [修改]
+        num_channels = EEG_data.shape[1] # Typically 66 for DTU
         num_bands = 5
         
         decomposed_de = np.empty([num_samples, num_channels, num_bands])
         
-        # 临时数组
+        # Temporary buffers for the current sample
         de = np.empty([1, num_channels, num_bands])
-        variances_temp = np.empty([1, num_channels, num_bands]) # (可选)
+        variances_temp = np.empty([1, num_channels, num_bands]) 
 
-        print(f"已加载 {num_samples} 个 1s 窗口, {num_channels} 个通道。开始计算 DE...")
+        print(f"Loaded {num_samples} samples, {num_channels} channels. Computing DE...")
 
-        # --- 3. [修改] 遍历该被试的每个 1s 样本 ---
-        for sample in tqdm(range(num_samples)):
-            trial_signal = EEG_data[sample] # (66, 128)
+        # --- 3. Iterate through each 1-second sample ---
+        for sample in tqdm(range(num_samples), desc=f"Subject {participant}"):
+            trial_signal = EEG_data[sample] # Shape: (Channels, Time)
             
-            # [修改] 遍历 66 个通道
             for channel in range(num_channels): 
-                signal_1s = trial_signal[channel] # (128,)
+                signal_1s = trial_signal[channel] # Shape: (Time,)
                 
-                # 各频段滤波
-                delta_data = butter_bandpass_filter(signal_1s, 0.1, 4, frequency, order=5)
-                theta_data = butter_bandpass_filter(signal_1s, 4, 8, frequency, order=5)
-                alpha_data = butter_bandpass_filter(signal_1s, 8, 14, frequency, order=5)
-                beta_data = butter_bandpass_filter(signal_1s, 14, 31, frequency, order=5)
-                gamma_data = butter_bandpass_filter(signal_1s, 31, 50, frequency, order=5)
+                # Apply bandpass filters
+                delta_data = butter_bandpass_filter(signal_1s, 0.1, 4, frequency)
+                theta_data = butter_bandpass_filter(signal_1s, 4, 8, frequency)
+                alpha_data = butter_bandpass_filter(signal_1s, 8, 14, frequency)
+                beta_data = butter_bandpass_filter(signal_1s, 14, 31, frequency)
+                gamma_data = butter_bandpass_filter(signal_1s, 31, 50, frequency)
 
-                # 计算DE特征
+                # Compute and store DE features
                 variances_temp[0, channel, 0], de[0, channel, 0] = compute_DE(delta_data)
                 variances_temp[0, channel, 1], de[0, channel, 1] = compute_DE(theta_data)
                 variances_temp[0, channel, 2], de[0, channel, 2] = compute_DE(alpha_data)
                 variances_temp[0, channel, 3], de[0, channel, 3] = compute_DE(beta_data)
                 variances_temp[0, channel, 4], de[0, channel, 4] = compute_DE(gamma_data)
             
-            # 将当前样本的DE特征添加到结果数组中
+            # Assign computed features to the main array
             decomposed_de[sample] = de
 
-        # --- 4. [修改] 保存该被试的 DE 特征和标签 ---
+        # --- 4. Save Extracted Features ---
         save_file_path = os.path.join(save_root, f'S{participant}_DE_Features_1s.npz')
         np.savez(save_file_path, DE=decomposed_de, labels=labels)
-        print(f"已保存: {save_file_path}")
+        print(f"Successfully saved to: {save_file_path}")
 
-    print("="*40)
-    print("所有被试的DE特征已保存完毕 (基于 1s 非重叠窗口)。")
+    print("\n" + "="*60)
+    print("DE feature extraction completed for all subjects.")
+    print("="*60)
 
 # =============================================================================
-# 4. 主函数
+# 4. Execution Entry Point
 # =============================================================================
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Extract Differential Entropy (DE) features from EEG signals.")
     
-    # [修改] 设置为您的 _1s.npz 文件所在的目录
-    # 我根据您旧代码的路径猜测了新路径
-    data_root = '/share/workspace/shared_datasets/DTU'
+    # Configurable paths via command line
+    parser.add_argument(
+        '--data_root', 
+        type=str, 
+        default='./data/DTU', 
+        help='Directory containing the raw 1s sliced .npz files.'
+    )
+    parser.add_argument(
+        '--save_root', 
+        type=str, 
+        default='./data/DE_Features', 
+        help='Target directory to save the extracted DE features.'
+    )
+    parser.add_argument(
+        '--num_subjects', 
+        type=int, 
+        default=18, 
+        help='Total number of subjects in the dataset.'
+    )
+    parser.add_argument(
+        '--fs', 
+        type=int, 
+        default=128, 
+        help='Sampling frequency of the EEG data.'
+    )
     
-    # [修改] 设置为您希望保存 DE 特征的新目录
-    save_root = '/share/home/yuan/LY/SNN_DBformer/DE_DTU/DE_1s'
+    args = parser.parse_args()
     
-    # 检查输入路径是否存在
-    if not os.path.exists(data_root):
-        print(f"!!! 警告: 输入路径不存在: {data_root}")
-        print("!!! 请确保 'data_root' 变量指向 'S1_Dataset_1s.npz' 等文件所在的目录。")
+    if not os.path.exists(args.data_root):
+        print(f"!!! Error: The input directory '{args.data_root}' does not exist.")
+        print("!!! Please specify the correct path using --data_root")
     else:
-        # 调用函数
-        extract_de_from_1s_windows(data_root, save_root)
+        extract_de_from_1s_windows(
+            data_root=args.data_root, 
+            save_root=args.save_root, 
+            num_subjects=args.num_subjects,
+            frequency=args.fs
+        )
