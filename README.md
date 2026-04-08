@@ -15,8 +15,7 @@ The network features:
 - **Spike Firing Approximation (SFA)**: A training paradigm that decouples training and inference, eliminating the need for expensive Backpropagation Through Time (BPTT).
     
 
-Experimental results on the KUL and DTU benchmark datasets demonstrate that SDBformer achieves state-of-the-art (SOTA) accuracy. Notably, it operates with extremely low energy consumption (**~0.0206 mJ/sample**) and requires only **0.13 M** parameters, making it highly suitable for resource-constrained wearable devices.
-
+Experimental results on the KUL and DTU benchmark datasets indicate that the SDBformer achieves highly competitive accuracy. Notably, it operates with remarkably low energy consumption (~0.0206 mJ/sample) and requires only 0.13 M parameters, suggesting its strong potential for application in resource-constrained wearable devices.
 ## Dataset & Preprocess
 
 This code is designed for **Within-Subject (WS)** analysis using **Differential Entropy (DE)** features.
